@@ -1,0 +1,4 @@
+hulk_ped/dev/*.png
+hulk_ped/dev/__pycache__/
+__pycache__/
+*.pyc
