@@ -126,11 +126,30 @@ def classify_skin(c, R):
     return label
 
 
-def density_weights_skin(v, R):
+def density_weights_skin(v, R, head_weight=0.995):
     """Per-vertex 'decimation amount' for the skin mesh (1 = full, slightly lower = keep more detail)."""
     w = np.ones(len(v), np.float32)
-    w[(v[:, 2] > anatomy.NECK_CUT_Z - 0.01) & (np.abs(v[:, 0]) < anatomy.NECK_CUT_X + 0.01)] = 0.995
+    w[(v[:, 2] > anatomy.NECK_CUT_Z - 0.01) & (np.abs(v[:, 0]) < anatomy.NECK_CUT_X + 0.01)] = head_weight
     return w
+
+
+def decimate_skin(grid, v, f, R, total=19500, head_target=5200, tries=(0.995, 0.99, 0.98, 0.96, 0.93)):
+    """Decimate the skin sculpt so the head keeps about ``head_target`` triangles (the weight needed depends on the
+    sculpt resolution, so it is searched for)."""
+    best = None
+    if len(f) > 650000:   # the density weights behave well on ~0.5M-triangle input: reduce uniformly first
+        v, f = decimate(v, f, 600000, None)
+        v = project_to_surface(grid, v)
+    for hw in tries:
+        dv, df = decimate(v, f, total, density_weights_skin(v, R, hw))
+        dv, df = cleanup(grid, dv, df)
+        lab = classify_skin(face_centroids(dv, df), R)
+        n_head = int((lab == Parts.HEAD).sum())
+        if best is None or abs(n_head - head_target) < abs(best[2] - head_target):
+            best = (dv, df, n_head)
+        if n_head >= head_target * 0.8:
+            break
+    return best[0], best[1]
 
 
 def hem_height(x, y, side):

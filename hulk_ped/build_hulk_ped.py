@@ -86,8 +86,7 @@ anatomy.build_skin(g, R)
 grids["skin"] = g
 v, f = g.mesh()
 log(f"skin sculpt: {len(f):,} triangles")
-dv, df = meshing.decimate(v, f, TRIS["skin"], meshing.density_weights_skin(v, R))
-dv, df = meshing.cleanup(g, dv, df)
+dv, df = meshing.decimate_skin(g, v, f, R, total=TRIS["skin"])
 lab = meshing.classify_skin(meshing.face_centroids(dv, df), R)
 for pid, nm in ((Parts.UPPR, "uppr"), (Parts.HEAD, "head"), (Parts.HAND, "hand"), (Parts.FEET, "feet")):
     sv, sf, _ = meshing.submesh(dv, df, lab == pid)
@@ -270,6 +269,7 @@ for o in dict_objs.values():
     coll.objects.link(o)
 
 blend_path = os.path.join(OUT, "hulk_ped.blend")
+bpy.ops.file.pack_all()   # textures travel inside the .blend (their DDS names are kept)
 bpy.ops.wm.save_as_mainfile(filepath=blend_path)
 log(f"saved {blend_path}")
 

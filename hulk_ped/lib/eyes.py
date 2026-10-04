@@ -41,7 +41,7 @@ def eye_texture(size=128, seed=2):
     img[:] = sclera * (1 - 0.35 * veins[..., None]) + np.array([0.7, 0.25, 0.2]) * 0.35 * veins[..., None]
     iris_r, pupil_r = 0.40, 0.15
     fib = 0.5 + 0.5 * np.sin(ang * 40 + rng.random() * 6) * np.sin(ang * 13)
-    iris = np.array([0.25, 0.42, 0.12])[None, None, :] * (0.7 + 0.5 * fib[..., None])
+    iris = np.array([0.30, 0.46, 0.14])[None, None, :] * (0.85 + 0.18 * fib[..., None])
     iris = iris * (1.0 - 0.45 * np.clip((r - 0.3) / 0.1, 0, 1))[..., None] + np.array([0.55, 0.5, 0.15]) * 0.3 * np.clip(1 - r / 0.3, 0, 1)[..., None]
     m_iris = np.clip((iris_r - r) / 0.012, 0, 1)[..., None]
     img = img * (1 - m_iris) + iris * m_iris
