@@ -1,0 +1,25 @@
+[package]
+name = "bm-bevy"
+version = "0.1.0"
+edition = "2024"
+description = "Blood Money (Rust) - Bevy shell: window, rendering, input and main loop on top of the bm-* crates"
+
+[[bin]]
+name = "bmb"
+path = "src/main.rs"
+
+[dependencies]
+bm-vfs = { path = "../bm-vfs" }
+bm-formats = { path = "../bm-formats" }
+bm-models = { path = "../bm-models" }
+# data only: FrameParams / scene lighting selection (the wgpu renderer itself is not used)
+bm-render = { path = "../bm-render" }
+bm-game = { path = "../bm-game" }
+bm-ui = { path = "../bm-ui" }
+bm-script = { path = "../bm-script" }
+bm-sound = { path = "../bm-sound", features = ["device"] }
+bevy = { version = "0.19", default-features = false, features = ["3d"] }
+clap = { version = "4", features = ["derive"] }
+log = "0.4"
+serde_json = "1"
+gilrs = "0.11"

@@ -1,0 +1,31 @@
+[package]
+name = "bm-particles"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["render"]
+# GPU instanced billboard rendering through bm-render's `RenderHooks`.
+render = ["dep:bm-render", "dep:wgpu", "dep:bytemuck", "dep:pollster", "dep:png"]
+
+[dependencies]
+bm-vfs = { path = "../bm-vfs" }
+bm-formats = { path = "../bm-formats" }
+bm-models = { path = "../bm-models" }
+bm-render = { path = "../bm-render", optional = true }
+wgpu = { version = "30", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
+pollster = { version = "0.4", optional = true }
+png = { version = "0.18.1", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ron = "0.8"
+log = "0.4"
+
+[dev-dependencies]
+env_logger = "0.11"
+png = "0.18.1"
+
+[[example]]
+name = "render_particles"
+required-features = ["render"]

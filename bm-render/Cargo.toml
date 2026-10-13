@@ -1,0 +1,18 @@
+[package]
+name = "bm-render"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bm-vfs = { path = "../bm-vfs" }
+bm-formats = { path = "../bm-formats" }
+bm-models = { path = "../bm-models" }
+wgpu = "30"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+png = "0.18.1"
+log = "0.4"
+
+[dev-dependencies]
+winit = "0.30"
+env_logger = "0.11"

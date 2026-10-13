@@ -1,0 +1,8 @@
+// Hideout (Scenes/hideout/hideout_main): free roam, no objectives. Walk around and shoot the walls.
+(
+    id: "hideout",
+    title: "Hideout (free roam)",
+    level: "Scenes/hideout/hideout_main",
+    objectives: [],
+    fail: [PlayerDead],
+)

@@ -1,0 +1,11 @@
+[package]
+name = "bm-formats"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bm-vfs = { path = "../bm-vfs" }
+flate2 = "1.1.10"
+
+[dev-dependencies]
+png = "0.18.1"

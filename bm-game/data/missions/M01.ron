@@ -1,0 +1,23 @@
+// Example mission for the Hacienda level (Scenes/M01/M01_main). Entity / node names are matched as
+// case-insensitive substrings of the scene graph names (`Characters!Special_characters!DonChilean`, ...).
+// The real mission script lives in the original engine's native logic (not decoded); this is a small
+// hand-authored stand-in: eliminate the main target, then reach the exit plane.
+(
+    id: "M01",
+    title: "Hacienda (example mission)",
+    level: "Scenes/M01/M01_main",
+    objectives: [
+        (
+            id: "kill_target",
+            text: "Eliminate the target",
+            kind: Kill(entity: "Special_characters!DonChilean"),
+        ),
+        (
+            id: "exit",
+            text: "Reach the extraction point",
+            kind: ReachNode(node: "ExitAreas!PlaneExit", radius: 900.0),
+            requires: ["kill_target"],
+        ),
+    ],
+    fail: [PlayerDead],
+)

@@ -1,0 +1,38 @@
+[package]
+name = "bm-app"
+version = "0.1.0"
+edition = "2024"
+description = "Blood Money (Rust) - application: window, main loop, CLI"
+
+[[bin]]
+name = "bm"
+path = "src/main.rs"
+
+[features]
+default = ["audio", "gamepad"]
+# Real audio output (cpal). Without it the game runs with the headless mixer (silent).
+audio = ["bm-sound/device"]
+# Gamepad input through gilrs.
+gamepad = ["dep:gilrs"]
+
+[dependencies]
+bm-vfs = { path = "../bm-vfs" }
+bm-formats = { path = "../bm-formats" }
+bm-models = { path = "../bm-models" }
+bm-render = { path = "../bm-render" }
+bm-particles = { path = "../bm-particles" }
+bm-sound = { path = "../bm-sound" }
+bm-music = { path = "../bm-music" }
+bm-ui = { path = "../bm-ui" }
+bm-script = { path = "../bm-script" }
+bm-game = { path = "../bm-game" }
+wgpu = "30"
+winit = "0.30"
+pollster = "0.4"
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+gilrs = { version = "0.11", optional = true }

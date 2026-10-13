@@ -1,0 +1,16 @@
+id = "hooks_demo"
+name = "Hooks Demo"
+version = "0.2.0"
+authors = ["bm-script examples"]
+description = "Shows event hooks: damage scaling, cancelling pickups, kill counter, timers, save data, hot-reload state."
+license = "CC0-1.0"
+api_version = "^1.0"
+priority = 10
+load_after = ["hello_mod"]
+permissions = ["world", "entities.read", "entities.write", "audio", "ui", "save", "console"]
+
+[optional_dependencies]
+hello_mod = ">=1.0.0"
+
+[scripts]
+entry = ["scripts/main.lua"]
