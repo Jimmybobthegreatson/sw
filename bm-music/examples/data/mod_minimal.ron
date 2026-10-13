@@ -1,0 +1,22 @@
+// Minimal music mod: replaces the combat music of a level with one looping file.
+// Install as  <mod dir>/Music/M01/combat.ron  (or Music/_global/combat.ron for every level)
+// and put the audio at  <mod dir>/Music/MyMod/fight.ogg
+(
+    name: "My combat pack",
+    tracks: {
+        "my_fight": (
+            source: File("Music/MyMod/fight.ogg"),
+            loop_start_secs: 8.0,        // the first 8 s are an intro that plays once
+            loop_crossfade_secs: 0.5,    // hide a non-seamless wrap
+            bpm: 140.0,                  // enables sync: Beat / Bar
+        ),
+    },
+    cues: { "my_fight": (stems: [(track: "my_fight")]) },
+    states: {
+        "combat": (cue: "my_fight", zone_locked: true, min_hold_secs: 6.0),
+    },
+    transitions: [
+        // entering combat: wait for the next beat (at most 2 s), then a quick crossfade
+        (to: ["combat"], rule: (sync: Beat, max_wait_secs: 2.0, fade_out: (secs: 0.25), fade_in: (secs: 0.25))),
+    ],
+)

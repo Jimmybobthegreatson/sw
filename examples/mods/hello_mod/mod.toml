@@ -1,0 +1,12 @@
+id = "hello_mod"
+name = "Hello Mod"
+version = "1.0.0"
+authors = ["bm-script examples"]
+description = "Smallest useful mod: logs, a console command, a cvar and a data patch."
+license = "CC0-1.0"
+api_version = "^1.0"
+game_version = "Hitman: Blood Money 1.0 (PC)"
+permissions = ["ui", "console", "world"]
+
+[scripts]
+entry = ["scripts/main.lua"]

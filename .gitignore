@@ -1,0 +1,12 @@
+﻿# Game install dir is NEVER copied into this repo. Point to it:
+#   set BM_GAME_DIR=C:\Users\Shadow\Downloads\Hitman Blood Money
+
+# generated audio dumps
+*.wav
+
+# build output
+/target/
+
+# game screenshots and texture dumps: copyrighted game art, not redistributable
+/tex_129.png
+docs/*.png

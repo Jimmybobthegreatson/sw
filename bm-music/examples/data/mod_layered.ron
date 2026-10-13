@@ -1,0 +1,24 @@
+// A layered (stem) cue driven by the intensity parameter: one cue, three synchronised stems.
+// All states use the same cue, so changing state only re-balances the stems (the music never restarts).
+(
+    name: "Dynamic score",
+    tracks: {
+        "bed":  (source: File("Music/MyMod/bed.ogg")),
+        "perc": (source: File("Music/MyMod/perc.ogg")),
+        "lead": (source: File("Music/MyMod/lead.ogg")),
+    },
+    cues: {
+        "dynamic": (stems: [
+            (name: "bed",  track: "bed"),
+            (name: "perc", track: "perc", layer: (fade_in: (0.25, 0.55))),
+            (name: "lead", track: "lead", layer: (fade_in: (0.60, 0.90), curve: SCurve)),
+        ]),
+    },
+    states: {
+        "explore": (cue: "dynamic", intensity: 0.0, follow_zone: true),
+        "alert":   (cue: "dynamic", intensity: 0.7, zone_locked: true),
+        "combat":  (cue: "dynamic", intensity: 1.0, zone_locked: true, stem_gains: {"bed": 0.8}),
+    },
+    intensity: (smooth_secs: 2.0),
+    transitions: [(rule: (fade_in: (secs: 1.5), fade_out: (secs: 1.5)))],
+)

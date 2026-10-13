@@ -1,0 +1,171 @@
+# bm-render - wgpu renderer
+
+Crate `bm-render` (depends on `bm-models`, `bm-vfs`, `bm-formats`; wgpu 30, bytemuck, pollster, png). It is
+window agnostic: it takes a `wgpu::Device` / `Queue` and the format of the target you give it. A headless
+path renders to a texture and reads it back (PNG), which is how everything below was verified.
+
+## Public API (for bm-app / bm-game)
+
+```rust
+use bm_render::*;
+
+// 1. device: your own (surface compatible) or the headless helper
+let ctx = GpuContext::new_headless()?;                    // real GPU, falls back to the software adapter
+//   ctx.is_fallback tells which; GpuContext::request_device(&adapter) gives the limits we need
+
+// 2. renderer (+ VFS so Shaders/WGSL/*.wgsl loose files override the builtin shaders)
+let mut r = Renderer::with_vfs(device, queue, surface_format, Some(vfs_arc));   // or Renderer::new(..)
+r.set_hooks(Box::new(MyHooks));                           // optional, before upload
+
+// 3. upload a scene (anything bm-models can give as Vec<DrawItem>)
+let scene = bm_models::Scene::load(&vfs, "Scenes/M01/M01_main")?;
+let items = scene.draw_list(&[NodeKind::Static, NodeKind::Actor, NodeKind::ClothBundle]);
+let mut gpu = SceneGpu::upload(&mut r, &scene, &items, &UploadOptions::default());   // gpu.stats
+
+// 4. every frame
+let mut params = FrameParams::default();                  // sun, ambient, fog, sky, point lights, debug mode
+params.lights = lights_from_scene(&scene, 900.0, [1.0, 0.85, 0.6]);
+let depth = DepthTexture::new(&device, w, h);             // recreate on resize
+let target = RenderTarget { color: &view, depth: &depth.view, width: w, height: h };
+r.render(&mut encoder, &target, Some(&gpu), &camera, &params);   // records one render pass
+queue.submit([encoder.finish()]);
+r.poll_hot_reload();                                      // ~1 Hz: re-read Shaders/WGSL/* from the VFS
+r.last_frame                                              // FrameStats: draw calls, triangles, instances
+
+// offscreen / screenshots
+let t = OffscreenTarget::new(&device, 1280, 720, wgpu::TextureFormat::Rgba8UnormSrgb);
+t.render_png(&mut r, Some(&gpu), &camera, &params, Path::new("out.png"))?;   // or render_rgba(..)
+```
+
+Dynamic things (item index = index into the `items` slice passed to `upload`):
+`gpu.set_world(item, Mat4)`, `gpu.set_visible(item, bool)`, `gpu.set_pose(item, &Pose)` (GPU skinning, writes the
+bone matrices `Skeleton::skinning_matrices(pose)`; the upload initialises every skinned item with the bind pose).
+`Camera { position, yaw, pitch, fov_y, near }` (+ `look_at`, `view_proj(aspect)`, `frustum(aspect)`), and
+`FlyController` for free-fly input. `SceneGpu::upload` needs `&mut Renderer` (hooks, default textures, layouts).
+`render` draws one `SceneGpu` per call and clears the target; to show several scenes/props together upload them as one item list.
+
+`examples/render_scene.rs`: `cargo run --release -p bm-render --example render_scene -- Scenes/M01/M01_main
+--node HO_Hacienda_FacadeE_01 --dist 3000 --radius 8000 --out m01.png` (offscreen, default) or `--window`
+(free-fly: WASD/QE, shift fast, right mouse look, 1/2/3 debug views, F5 shader reload). Options: `--cam x,y,z,yaw,pitch`,
+`--list NAME`, `--size WxH`, `--lod all`, `--no-skinned`, `--kinds static,actor,...`, `--debug N`, `--no-lights`.
+
+## Conventions
+
+* Native Glacier data is **left-handed, Y-up, cm, clockwise**. Nothing is mirrored: the camera builds a left-handed
+  view (`right = cross(up, forward)`, `yaw = 0` looks down +Z) and every pipeline uses `FrontFace::Cw` + back-face
+  culling (`Ccw` for instances with a negative matrix determinant). Verified visually on M01/M13/hideout (inside-out
+  faces would show immediately); UVs are used as stored (top-left origin, no flip) and are right.
+* Projection is **reverse-Z with an infinite far plane** (`depth = near / z`, clear 0, compare `GreaterEqual`, `Depth32Float`),
+  needed for the ~100 km wide levels; distance haze is done by fog. Frustum culling uses the 5 side planes.
+* Output is linear light. If the target format is not sRGB the shader gamma-encodes (override constant `GAMMA_ENCODE`).
+  Albedo and illumination textures are sampled as sRGB, normal and specular maps as linear.
+
+## Pipeline overview
+
+1. **Upload** (`gpu_scene.rs`): meshes are filtered (skipped: `PosColor10`, non-LOD0 unless `lod0_only = false`,
+   skinned meshes of other outfits (the actor's outfit value, default 1), `SHADOW`/`STATICSHADOW` materials, helper materials
+   `_Glacier/*` (green collision proxies), `AlwaysInShadow*` and the unnamed untextured `.MAT` instances 1..5, hook-skipped materials), converted to one interleaved
+   76 byte vertex and packed into 800k-vertex "pages" (shared vertex+index buffers, `base_vertex` draws). Each distinct
+   `Model` becomes an *instance list* (geometry once, one 80 byte instance record per node: matrix + bone base).
+   Textures are decoded through `bm-formats` including the stored mip chain (a chain is generated by box filter when only
+   mip 0 exists), capped at `max_texture_size` (default 1024) by dropping top mips, uploaded as `Rgba8Unorm[Srgb]`.
+   Samplers: `TILED/MIRRORED` map to repeat/mirror, `NONE`/empty also **repeats** (clamping smeared floors and walls).
+   Id 0 and undecodable ids (cube/id lists, 2 in M01) fall back to 1x1 defaults.
+2. **Per frame** (`SceneGpu::plan`): cull instance bounds against the frustum (and `max_draw_distance`), write the visible
+   instances into a per-frame instance buffer (normal and mirrored instances in separate ranges so that repeats are drawn
+   with **hardware instancing**), then build draw commands.
+3. **Order**: sky gradient -> backdrop layer -> opaque (+alpha-test) sorted by pipeline/material/page -> `*_ON_OPAQUE`
+   blends -> `ADD_BEFORE_TRANS` -> `TRANS` -> remaining additive; everything after the opaque pass is drawn per instance
+   back to front (no depth write). `RenderHooks::draw_extra` runs after opaque and at the end.
+4. **Material -> pipeline mapping** (`MaterialDesc`): `BlendMode` (Opaque / alpha / additive classes), `CullMode`
+   (TwoSided = no culling and flipped normals on back faces), `ATST/AREF` (alpha-test pipeline variant, `discard` below `aref`),
+   `OPAC` (alpha multiplier), `ZBIA` (constant depth bias), `FENA` (fog), `v4DiffuseColor` (tint), `mapNormal` (tangent space,
+   z reconstructed from xy, honoured unless `BumpEnabled` is explicitly off), `mapSpecularMask` + `v4SpecularColor` /
+   `vSpecularLevel` / `v4SpecularPower` (Blinn-Phong when `SpecularEnabled`), `mapIllumination` x `v4IlluminationColor`
+   (emissive). Additive blends are drawn unlit and without fog. Pipelines are specialised with override constants
+   (`SKINNED`, `ALPHA_TEST`, `GAMMA_ENCODE`, `SKY_LAYER`) and cached by `PipelineKey`.
+5. **Lighting** (`FrameParams`): hemispherical ambient, one directional sun (no shadow map yet), up to **16 point
+   lights** (the nearest to the camera each frame) with quadratic falloff, exponential fog, baked vertex colour as an
+   AO multiplier (`vertex_color_strength`), exposure, debug views (1 albedo, 2 normals). `lights_from_scene` creates a
+   point light for every `NodeKind::Light` node (`ZOmniLight` 0x800024, spot 0x800020/23, 0x8000f5): **only the position is
+   known** - the node properties hold no colour/range (their single `I32` indexes data that is not decoded), so all lights
+   share the defaults you pass in.
+6. **Sky / backdrop**: a procedural gradient + sun disc is drawn first. Items below a `*Backdrop*` group or named `SkySphere*`
+   (sky dome, cloud planes, mountains, ocean glow cards) are drawn as an unlit, un-fogged, depth-less *layer*
+   translated to the camera position, as the engine keeps backdrops centred on the player (`UploadOptions::sky_layer`).
+7. **Skinning**: skinned meshes use a storage buffer of 4x4 matrices (`skinning_matrices`, bone index = skeleton bone id,
+   exactly `VertexData::joints`) with 4 weights per vertex in the vertex shader. Bind pose = identity matrices; animation
+   playback uses `set_skinning` / `set_pose` (bm-game samples decoded `.ANM` clips). Skinned bounds are padded by 100 cm for culling.
+
+## Modding: shaders, hot reload, hooks
+
+* **Shader override**: the builtin WGSL (`bm-render/src/shaders/main.wgsl`, constant `shaders::BUILTIN_SOURCE`) has the VFS
+  path `Shaders/WGSL/main.wgsl`. A loose file with that path in any mod dir (or the game dir) replaces it for every material.
+  Bindings: group 0 = frame uniform + bone storage buffer, group 1 = material uniform, sampler, diffuse, normal, specular
+  mask, illumination; vertex attributes 0-6 (mesh) and 8-12 (instance); entry points `vs_main`, `fs_main`, `vs_sky`, `fs_sky`.
+  Keep these, copy the builtin file as a template.
+* **Per-material shaders**: `MaterialOverride::shader = Some("Shaders/WGSL/glass.wgsl")` (VFS path) renders that material with
+  your module (same bindings; `vs_main`/`fs_main`). Invalid modules are rejected and the builtin one is used.
+* **Hot reload**: `Renderer::poll_hot_reload()` re-reads all loaded modules from the VFS, compiles each inside a validation
+  error scope, swaps successful ones and rebuilds the pipelines; a broken edit logs the error (`Renderer::shader_errors`) and
+  the previous working shader stays active. Limitation: `bm-vfs` indexes loose files when the `Vfs` is created, so the file
+  must exist at start-up (create it with the unmodified builtin source) - later *edits* are picked up, brand new files need a
+  restart (or a VFS rescan once bm-vfs offers one). The example polls once a second.
+* **`RenderHooks`** (trait, all methods optional, install with `Renderer::set_hooks`):
+  `material(&MaterialInfo) -> MaterialOverride` (skip, `color_mul`, `emissive`, per-material `shader`, `force_blend`; called once per
+  distinct material while uploading), `before_frame(&mut Camera, &mut FrameParams)` (animate sun/fog/exposure/camera shake),
+  `draw_extra(HookStage::{AfterOpaque, AfterTransparent}, &HookContext, &mut RenderPass)` (debug drawing, particles; the frame bind
+  group and layout are provided so custom pipelines can share group 0).
+
+## Verification (this machine: NVIDIA RTX 2000 Ada, Vulkan - no software fallback was needed)
+
+Renders in the session scratchpad (not committed; they are game content): M01 Hacienda exterior (recognisable
+facade, roofs, palms, balconies, correct winding/UVs), a Hacienda interior corridor with a skinned character in T-pose, M13
+morgue elevator room, hideout interior. M01 near the Hacienda: 4.7k items -> ~1.4M triangles, 5k draw calls, 0.1-0.25 s per
+frame headless; whole-level upload 0.6 s (730 textures, 235 MB at 1024 cap). `cargo test -p bm-render` (needs a GPU or
+software adapter, real-file tests skip without the game): sky frame, shader override + hot reload + broken-edit
+recovery, real scene render, material hook.
+
+## Known gaps / next steps
+
+* No shadow map, no environment/reflection maps (`mapEnvironment`, windows look like chrome), no rim/sub-surface/parallax,
+  no water shader (`WaterSurface.fx` materials render as plain textured quads), no scatter/grass (`ZScatterObj` is not decoded in bm-models),
+  no particles (bm-particles hooks in via `draw_extra`).
+* Light/sun/ambient/fog are decoded, see the audit table at the end; light maps are not.
+* Some hideout surfaces show strongly stretched textures (UVs as stored); not yet explained (material tiling rules or a second UV
+  set, `mapParallax`/detail maps are possible suspects). Large `AlwaysInShadow` meshes were interpreted as helper geometry (skipped by
+  default, `skip_helper_materials`) - an assumption based on their untextured green/grey look; revisit when light-map formats are known.
+* Skinned characters draw the LOD0 meshes of exactly one outfit of the combined model (`UploadOptions::actor_outfits`: the value stored in
+  the `ZHM3Actor`, `outfit_by_node` overrides); see `docs/anim.md` section 6.
+* No MSAA, no mip-aware texture streaming (all textures resident), all draws in one pass (no depth pre-pass / clustered lights).
+
+
+## Lighting audit and tuning (agent #12 data, agent #13 audit)
+
+Confidence: **H** = decoded and checked against shipped data, **M** = decoded, semantics inferred, **G** = guessed / tuned by eye.
+
+| Item | Source | Conf. |
+|---|---|---|
+| Point/spot light colour, intensity, range start/end, cone, direction (`ZOMNILIGHT`, `ZSPOTLIGHT`, `ZSPOTLIGHTSQUARE`) | PRM light records (`bm_formats::light`, `bm_models::lighting`) | H fields, M falloff (linear start..end) |
+| Sun colour/direction, hemisphere ambient outdoors | `ZENVIRONMENT` that lists static shadow meshes; direction = node +Z; agrees with the backdrop `Sun_*` sprite (dot 0.998 in M01) | M |
+| Room ambient/directional (`ZENVIRONMENT` in `InsideBound*` zones, `*_env_character*` twins for actors) | smallest containing zone box | M |
+| Fog start/full/colour, camera far, FOV | scene definitions `CameraFogBegin/Full` (fractions of `CameraFar`), `CameraBackgroundColor` (colour byte order **G**) | M |
+| Interior ambient lift (`INTERIOR_AMBIENT_GAIN` 1.35, floor 0.07) | tuning: unlit corners were black because baked light maps are not decoded | **G** |
+| Vertex colour as AO multiplier, exposure 1, sky_gain 1.6, display-space math, no tone mapping | engine-faithful guess | G |
+
+Not decoded: light maps / baked per-room lighting, exact falloff curve and `flags` of light records, per-material shader constants
+(`v4BumpScale`, rim, sub-surface), the `ZENVIRONMENT` bool properties. M06 is a night level: it is dark by data (fog colour 0.09/0.13/0.13);
+the club is lit by its 937 decoded lights. `bm screenshot --set "amb=1.5,vcs=0.5,exposure=1.2,fog_end=0,debug=1,..."` overrides parameters for A/B tests.
+
+### Horizon (M01) **H**
+The pale band was the bottom of the sky dome (`SkySphere_01`; its lower rim is only 5 000 cm below the camera and ~185 000 cm away): where
+the terrain ends the unlit pale rim showed as a hard band against the grey-blue sky. The engine hides it with the distance-fog colour. Now
+opaque sky-layer geometry is blended towards the fog colour from ~13 degrees above the horizon downwards (`main.wgsl`, `SKY_LAYER`
+branch), so far terrain, dome rim and sky form one haze gradient.
+
+### Windows / glass
+Many window materials are `Opaque` in the `.MAT` (`Window_M06_*`, `Glass_M06_02_Dark`: dirty glass baked into the diffuse) but have
+`ReflectionEnabled` plus a `mapReflectionMask` that is white on the panes and black on the frame. Such materials (name contains
+`window`/`glass`, opaque, reflection mask present) are now drawn **blended** with `alpha = 1 - 0.6 * mask` (`F_GLASS`): panes are see-through and
+keep their environment reflection (reflection raises the opacity), frames stay opaque (the 0.6 is **G**). `Effects/*Glow*` cards are drawn
+unlit (self-lit window glows). Genuinely blended glass (`Trans`, M03/M13) is unchanged.

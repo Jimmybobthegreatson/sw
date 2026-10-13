@@ -1,0 +1,19 @@
+[package]
+name = "bm-script"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bm-vfs = { path = "../bm-vfs" }
+mlua = { version = "0.11", features = ["luau", "vendored", "serialize"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+ron = "0.8"
+semver = { version = "1", features = ["serde"] }
+thiserror = "2"
+log = "0.4"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"
